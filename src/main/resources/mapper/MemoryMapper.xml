@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.diet.mapper.MemoryMapper">
+
+    <resultMap id="SessionMemoryRowMap" type="com.diet.model.SessionMemoryRow">
+        <id property="sessionId" column="session_id"/>
+        <result property="summary" column="summary"/>
+        <result property="summarizedMessageId" column="summarized_message_id"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="SessionMessageRowMap" type="com.diet.model.SessionMessageRow">
+        <id property="id" column="id"/>
+        <result property="sessionId" column="session_id"/>
+        <result property="role" column="role"/>
+        <result property="content" column="content"/>
+        <result property="intent" column="intent"/>
+        <result property="agentTraceId" column="agent_trace_id"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <resultMap id="UserMemoryRowMap" type="com.diet.model.UserMemoryRow">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="memoryType" column="memory_type"/>
+        <result property="memoryKey" column="memory_key"/>
+        <result property="memoryValue" column="memory_value"/>
+        <result property="sourceSessionId" column="source_session_id"/>
+        <result property="active" column="active"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="findSessionMemory" resultMap="SessionMemoryRowMap">
+        SELECT memory.session_id,
+               memory.summary,
+               memory.summarized_message_id,
+               memory.created_at,
+               memory.updated_at
+        FROM diet_session_memory memory
+        INNER JOIN diet_sessions session
+                ON session.id = memory.session_id
+               AND session.user_id = #{userId}
+        WHERE memory.session_id = #{sessionId}
+    </select>
+
+    <select id="findRecentCutoffMessageId" resultType="java.lang.Long">
+        SELECT MIN(recent.id)
+        FROM (
+            SELECT message.id
+            FROM diet_messages message
+            INNER JOIN diet_sessions session
+                    ON session.id = message.session_id
+                   AND session.user_id = #{userId}
+            WHERE message.session_id = #{sessionId}
+            ORDER BY message.id DESC
+            LIMIT #{recentLimit}
+        ) recent
+    </select>
+
+    <select id="listMessagesForSummary" resultMap="SessionMessageRowMap">
+        SELECT message.id,
+               message.session_id,
+               message.role,
+               message.content,
+               message.intent,
+               message.agent_trace_id,
+               message.created_at
+        FROM diet_messages message
+        INNER JOIN diet_sessions session
+                ON session.id = message.session_id
+               AND session.user_id = #{userId}
+        WHERE message.session_id = #{sessionId}
+          AND message.id &gt; #{afterMessageId}
+          AND message.id &lt; #{beforeMessageId}
+        ORDER BY message.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <insert id="upsertSessionMemory" parameterType="com.diet.model.SessionMemoryRow">
+        INSERT INTO diet_session_memory (
+            session_id, summary, summarized_message_id, created_at, updated_at
+        ) VALUES (
+            #{sessionId}, #{summary}, #{summarizedMessageId}, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            summary = VALUES(summary),
+            summarized_message_id = VALUES(summarized_message_id),
+            updated_at = NOW()
+    </insert>
+
+    <insert id="upsertUserMemory" parameterType="com.diet.model.UserMemoryRow">
+        INSERT INTO diet_user_memory (
+            user_id, memory_type, memory_key, memory_value,
+            source_session_id, active, created_at, updated_at
+        ) VALUES (
+            #{userId}, #{memoryType}, #{memoryKey}, #{memoryValue},
+            #{sourceSessionId}, 1, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            memory_value = VALUES(memory_value),
+            source_session_id = VALUES(source_session_id),
+            active = 1,
+            updated_at = NOW()
+    </insert>
+
+    <select id="listActiveUserMemories" resultMap="UserMemoryRowMap">
+        SELECT id,
+               user_id,
+               memory_type,
+               memory_key,
+               memory_value,
+               source_session_id,
+               active,
+               created_at,
+               updated_at
+        FROM diet_user_memory
+        WHERE user_id = #{userId}
+          AND active = 1
+        ORDER BY FIELD(memory_type, 'ALLERGY', 'AVOID', 'GOAL', 'PREFERENCE'),
+                 updated_at DESC,
+                 id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="deactivateUserMemory">
+        UPDATE diet_user_memory
+        SET active = 0,
+            updated_at = NOW()
+        WHERE id = #{memoryId}
+          AND user_id = #{userId}
+          AND active = 1
+    </update>
+
+</mapper>
